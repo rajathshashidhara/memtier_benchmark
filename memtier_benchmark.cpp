@@ -1044,7 +1044,7 @@ run_stats run_benchmark(int run_id, benchmark_config* cfg, object_generator* obj
 {
     pthread_barrier_t barrier;
     fprintf(stderr, "[RUN #%u] Preparing benchmark client...\n", run_id);
-    pthread_barrier_init(&barrier, NULL, cfg->threads);
+    pthread_barrier_init(&barrier, NULL, cfg->threads + 1);
 
     // prepare threads data
     std::vector<cg_thread*> threads;
@@ -1060,6 +1060,10 @@ run_stats run_benchmark(int run_id, benchmark_config* cfg, object_generator* obj
     for (std::vector<cg_thread*>::iterator i = threads.begin(); i != threads.end(); i++) {
         (*i)->start();
     }
+
+    sleep(60);  /* Sleep for 60 seconds to process all connection move requests */
+
+    pthread_barrier_wait(&barrier);
 
     unsigned long int prev_ops = 0;
     unsigned long int prev_bytes = 0;
