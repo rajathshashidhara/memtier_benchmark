@@ -139,6 +139,39 @@ unsigned long long gaussian_noise::gaussian_distribution_range(double stddev, do
     return val;
 }
 
+void zipfian_noise::compute_params() {
+    m_theta = m_zipfianconstant;
+    m_zetan = zetastatic(m_range, m_zipfianconstant);
+    m_zeta2theta = zetastatic(2, m_theta);
+    m_alpha = 1.0 / (1.0 - m_theta);
+    m_eta = (1 - pow(2.0 / m_range, 1.0 - m_theta)) / (1 - m_zeta2theta / m_zetan);
+}
+
+unsigned long long zipfian_noise::zipfian_distribution_range(unsigned long long min, unsigned long long max, double zipfianconstant)
+{
+    if (m_base != min || m_range != (max-min+1) || m_zipfianconstant != zipfianconstant) {
+        m_base = min;
+        m_range = max - min + 1;
+        m_zipfianconstant = zipfianconstant;
+
+        compute_params();
+    }
+
+    double u = (get_random() / ((double) get_random_max()));
+    double uz = u * m_zetan;
+
+    if (uz < 1.0) {
+      return m_base;
+    }
+
+    if (uz < 1.0 + pow(0.5, m_theta)) {
+      return m_base + 1;
+    }
+
+    unsigned long long ret = m_base + (unsigned long long) ((m_range) * pow(m_eta * u - m_eta + 1, m_alpha));
+    return ret;
+}
+
 object_generator::object_generator(size_t n_key_iterators/*= OBJECT_GENERATOR_KEY_ITERATORS*/) :
     m_data_size_type(data_size_unknown),
     m_data_size_pattern(NULL),
@@ -150,6 +183,7 @@ object_generator::object_generator(size_t n_key_iterators/*= OBJECT_GENERATOR_KE
     m_key_max(0),
     m_key_stddev(0),
     m_key_median(0),
+    m_key_zipfconst(ZIPFIAN_CONSTANT),
     m_value_buffer(NULL),
     m_random_fd(-1),
     m_value_buffer_size(0),
@@ -172,6 +206,7 @@ object_generator::object_generator(const object_generator& copy) :
     m_key_max(copy.m_key_max),
     m_key_stddev(copy.m_key_stddev),
     m_key_median(copy.m_key_median),
+    m_key_zipfconst(copy.m_key_zipfconst),
     m_value_buffer(NULL),
     m_random_fd(-1),
     m_value_buffer_size(0),
@@ -208,6 +243,7 @@ object_generator* object_generator::clone(void)
 void object_generator::set_random_seed(int seed)
 {
     m_random.set_seed(seed);
+    m_zipf_random.set_seed(seed);
 }
 
 void object_generator::alloc_value_buffer(void)
@@ -342,10 +378,15 @@ void object_generator::set_key_range(unsigned long long key_min, unsigned long l
     m_key_max = key_max;
 }
 
-void object_generator::set_key_distribution(double key_stddev, double key_median)
+void object_generator::set_key_gaussian_distribution(double key_stddev, double key_median)
 {
     m_key_stddev = key_stddev;
     m_key_median = key_median;
+}
+
+void object_generator::set_key_zipfconst(double key_zipfconst)
+{
+    m_key_zipfconst = key_zipfconst;
 }
 
 // return a random number between r_min and r_max
@@ -361,15 +402,23 @@ unsigned long long object_generator::normal_distribution(unsigned long long r_mi
     return m_random.gaussian_distribution_range(r_stddev, r_median, r_min, r_max);
 }
 
+// return a random number using zipfian distribution
+unsigned long long object_generator::zipfian_distribution(unsigned long long r_min, unsigned long long r_max, double r_zipfconst)
+{
+    return m_zipf_random.zipfian_distribution_range(r_min, r_max, r_zipfconst);
+}
+
 unsigned long long object_generator::get_key_index(int iter)
 {
-    assert(iter < static_cast<int>(m_next_key.size()) && iter >= OBJECT_GENERATOR_KEY_GAUSSIAN);
+    assert(iter < static_cast<int>(m_next_key.size()) && iter >= OBJECT_GENERATOR_KEY_ZIPFIAN);
 
     unsigned long long k;
     if (iter==OBJECT_GENERATOR_KEY_RANDOM) {
         k = random_range(m_key_min, m_key_max);
     } else if(iter==OBJECT_GENERATOR_KEY_GAUSSIAN) {
         k = normal_distribution(m_key_min, m_key_max, m_key_stddev, m_key_median);
+    } else if(iter == OBJECT_GENERATOR_KEY_ZIPFIAN) {
+        k = zipfian_distribution(m_key_min, m_key_max, m_key_zipfconst);
     } else {
         if (m_next_key[iter] < m_key_min)
             m_next_key[iter] = m_key_min;

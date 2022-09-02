@@ -20,6 +20,7 @@
 #define _OBJ_GEN_H
 
 #include <vector>
+#include <cmath>
 #include "file_io.h"
 
 struct random_data;
@@ -50,6 +51,30 @@ private:
 	double m_spare;
 };
 
+#define ZIPFIAN_CONSTANT 0.99
+class zipfian_noise: public random_generator {
+public:
+    zipfian_noise() { m_base = 0; m_range = 10000000; m_zipfianconstant = ZIPFIAN_CONSTANT; compute_params(); }
+    unsigned long long zipfian_distribution_range(unsigned long long min, unsigned long long max, double zipfianconstant);
+private:
+    double m_zipfianconstant;         /*> The zipfian constant to use */
+    unsigned long long m_base;        /*> Min index to generate */
+    unsigned long long m_range;       /*> [base, base + range) indices to generate */
+
+    /* Computed paramters for generating the distribution */
+    double m_alpha, m_zetan, m_eta, m_theta, m_zeta2theta;
+
+    static double zetastatic(unsigned long long n, double theta) {
+        double sum = 0;
+        for (unsigned long long i = 0; i < n; i++) {
+            sum += 1.0 / pow(i + 1, theta);
+        }
+
+        return sum;
+    }
+    void compute_params();
+};
+
 class data_object {
 protected:
     const char *m_key;
@@ -75,6 +100,7 @@ public:
 #define OBJECT_GENERATOR_KEY_GET_ITER   0
 #define OBJECT_GENERATOR_KEY_RANDOM    -1
 #define OBJECT_GENERATOR_KEY_GAUSSIAN  -2
+#define OBJECT_GENERATOR_KEY_ZIPFIAN   -3
 
 class object_generator {
 public:
@@ -98,6 +124,7 @@ protected:
     unsigned long long m_key_max;
     double m_key_stddev;
     double m_key_median;
+    double m_key_zipfconst;
     data_object m_object;
 
     std::vector<unsigned long long> m_next_key;
@@ -107,6 +134,7 @@ protected:
     char *m_value_buffer;
     int m_random_fd;
     gaussian_noise m_random;
+    zipfian_noise m_zipf_random;
     unsigned int m_value_buffer_size;
     unsigned int m_value_buffer_mutation_pos;
 
@@ -121,6 +149,7 @@ public:
 
     unsigned long long random_range(unsigned long long r_min, unsigned long long r_max);
     unsigned long long normal_distribution(unsigned long long r_min, unsigned long long r_max, double r_stddev, double r_median);
+    unsigned long long zipfian_distribution(unsigned long long r_min, unsigned long long r_max, double r_zipfconst);
 
     void set_random_data(bool random_data);
     void set_data_size_fixed(unsigned int size);
@@ -130,7 +159,8 @@ public:
     void set_expiry_range(unsigned int expiry_min, unsigned int expiry_max);
     void set_key_prefix(const char *key_prefix);
     void set_key_range(unsigned long long key_min, unsigned long long key_max);
-    void set_key_distribution(double key_stddev, double key_median);
+    void set_key_gaussian_distribution(double key_stddev, double key_median);
+    void set_key_zipfconst(double key_zipfconst);
     void set_random_seed(int seed);
 
     unsigned long long get_key_index(int iter);
