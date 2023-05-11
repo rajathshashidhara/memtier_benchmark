@@ -19,6 +19,7 @@
 #ifndef _CLIENT_H
 #define _CLIENT_H
 
+#include <assert.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <netdb.h>
@@ -72,6 +73,8 @@ protected:
     unsigned long long m_tot_wait_ops;            // Total number of WAIT ops
 
     keylist *m_keylist;                           // used to construct multi commands
+
+    client_group* m_group;                        // client group
 
 public:
     client(client_group* group);
@@ -159,6 +162,9 @@ public:
     unsigned long long int get_errors(void);
 };
 
+#define HISTOGRAM_START_US  0
+#define HISTOGRAM_BUCKET_US 1
+#define HISTOGRAM_BUCKETS   (256 * 1024)
 class client_group {
 protected:
     struct event_base* m_base;
@@ -166,6 +172,9 @@ protected:
     abstract_protocol* m_protocol;
     object_generator* m_obj_gen;
     std::vector<client*> m_clients;
+
+    uint64_t *m_histogram;
+
 public:
     client_group(benchmark_config *cfg, abstract_protocol *protocol, object_generator* obj_gen);
     ~client_group();
@@ -179,7 +188,7 @@ public:
     struct event_base *get_event_base(void) { return m_base; }
     benchmark_config *get_config(void) { return m_config; }
     abstract_protocol* get_protocol(void) { return m_protocol; }
-    object_generator* get_obj_gen(void) { return m_obj_gen; }    
+    object_generator* get_obj_gen(void) { return m_obj_gen; }
 
     unsigned long int get_total_bytes(void);
     unsigned long int get_total_ops(void);
@@ -187,6 +196,26 @@ public:
     unsigned long int get_duration_usec(void);
 
     void merge_run_stats(run_stats* target);
+
+    void record_latency(uint64_t us) {
+        assert(us >= HISTOGRAM_START_US);
+        size_t bucket = (us - HISTOGRAM_START_US) / HISTOGRAM_BUCKET_US;
+
+        if (bucket >= HISTOGRAM_BUCKETS)
+            bucket = HISTOGRAM_BUCKETS - 1;
+
+        __sync_fetch_and_add(&m_histogram[bucket], 1);
+    }
+
+    void read_and_reset_histogram(uint64_t *histogram) {
+        for (unsigned i = 0; i < HISTOGRAM_BUCKETS; i++) {
+            uint64_t v = m_histogram[i];
+            __sync_fetch_and_sub(&m_histogram[i], v);
+            histogram[i] += v;
+        }
+
+        return;
+    }
 };
 
 

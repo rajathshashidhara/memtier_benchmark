@@ -1066,6 +1066,33 @@ void size_to_str(unsigned long int size, char *buf, int buf_len)
     }
 }
 
+static inline int hist_value(size_t i)
+{
+    if (i == HISTOGRAM_BUCKETS - 1) {
+        return -1;
+    }
+
+    return i * HISTOGRAM_BUCKET_US + HISTOGRAM_START_US;
+}
+
+static inline void hist_fract_buckets(uint64_t *histogram, uint64_t total,
+        std::vector<double>& fracs, std::vector<uint32_t>& latencies)
+{
+    size_t i, j;
+    uint64_t sum = 0;
+    std::vector<uint64_t> goals;
+    for (auto f : fracs) {
+        goals.emplace_back(total * f);
+    }
+
+    for (i = 0, j = 0; i < HISTOGRAM_BUCKETS && j < fracs.size(); i++) {
+        sum += histogram[i];
+        for (; j < fracs.size() && sum >= goals[j]; j++) {
+            latencies.push_back(hist_value(i));
+        }
+    }
+}
+
 run_stats run_benchmark(int run_id, benchmark_config* cfg, object_generator* obj_gen)
 {
     fprintf(stderr, "[RUN #%u] Preparing benchmark client...\n", run_id);
@@ -1096,6 +1123,13 @@ run_stats run_benchmark(int run_id, benchmark_config* cfg, object_generator* obj
     unsigned long int cur_ops_sec = 0;
     unsigned long int cur_bytes_sec = 0;
 
+    uint64_t *histogram = new uint64_t[HISTOGRAM_BUCKETS];
+    assert(histogram != NULL);
+    std::vector<double> fracs;
+    for (auto f : cfg->print_percentiles.quantile_list) {
+        fracs.push_back(f/100.0);
+    }
+
     // provide some feedback...
     unsigned int active_threads = 0;
     do {
@@ -1108,6 +1142,8 @@ run_stats run_benchmark(int run_id, benchmark_config* cfg, object_generator* obj
         unsigned int thread_counter = 0;
         unsigned long int total_latency = 0;
 
+        memset(histogram, 0, sizeof(uint64_t) * HISTOGRAM_BUCKETS);
+
         for (std::vector<cg_thread*>::iterator i = threads.begin(); i != threads.end(); i++) {
             if (!(*i)->m_finished)
                 active_threads++;
@@ -1118,6 +1154,8 @@ run_stats run_benchmark(int run_id, benchmark_config* cfg, object_generator* obj
             thread_counter++;
             float factor = ((float)(thread_counter - 1) / thread_counter);
             duration =  factor * duration +  (float)(*i)->m_cg->get_duration_usec() / thread_counter ;
+
+            (*i)->m_cg->read_and_reset_histogram(histogram);
         }
 
         unsigned long int cur_ops = total_ops-prev_ops;
@@ -1135,12 +1173,12 @@ run_stats run_benchmark(int run_id, benchmark_config* cfg, object_generator* obj
         if (duration > 1) {
             ops_sec = (long)( (double)total_ops / duration * 1000000);
             bytes_sec = (long)( (double)total_bytes / duration * 1000000);
-            avg_latency = ((double) total_latency / 1000 / total_ops) ;
+            avg_latency = ((double) total_latency / total_ops) ;
         }
         if (cur_duration > 1 && active_threads == cfg->threads) {
             cur_ops_sec = (long)( (double)cur_ops / cur_duration * 1000000);
             cur_bytes_sec = (long)( (double)cur_bytes / cur_duration * 1000000);
-            cur_latency = ((double) cur_total_latency / 1000 / cur_ops) ;
+            cur_latency = ((double) cur_total_latency / cur_ops) ;
         }
 
         char bytes_str[40], cur_bytes_str[40];
@@ -1153,8 +1191,15 @@ run_stats run_benchmark(int run_id, benchmark_config* cfg, object_generator* obj
         else
             progress = 100.0 * (duration / 1000000.0)/cfg->test_time;
 
-        fprintf(stderr, "[RUN #%u %.0f%%, %3u secs] %2u threads: %11lu ops, %7lu (avg: %7lu) ops/sec, %s/sec (avg: %s/sec), %5.2f (avg: %5.2f) msec latency\r",
-            run_id, progress, (unsigned int) (duration / 1000000), active_threads, total_ops, cur_ops_sec, ops_sec, cur_bytes_str, bytes_str, cur_latency, avg_latency);
+        std::vector<uint32_t> latencies;
+        hist_fract_buckets(histogram, cur_ops, fracs, latencies);
+
+        fprintf(stderr, "[RUN #%u %.0f%%, %3u secs] %2u threads: %11lu ops, %7lu ops/s, %s/s, %5.2f us latency\n",
+            run_id, progress, (unsigned int) (duration / 1000000), active_threads, total_ops, cur_ops_sec, cur_bytes_str, cur_latency);
+        for (auto i = 0; i < fracs.size(); i++)
+            fprintf(stderr, "%f p: %u us, ", fracs[i], latencies[i]);
+        fprintf(stderr, "\n");
+
     } while (active_threads > 0);
 
     fprintf(stderr, "\n\n");

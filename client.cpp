@@ -100,7 +100,7 @@ client::client(client_group* group) :
         m_obj_gen(NULL), m_stats(group->get_config()), m_reqs_processed(0), m_reqs_generated(0),
         m_set_ratio_count(0), m_get_ratio_count(0),
         m_arbitrary_command_ratio_count(0), m_executed_command_index(0),
-        m_tot_set_ops(0), m_tot_wait_ops(0)
+        m_tot_set_ops(0), m_tot_wait_ops(0), m_group(group)
 {
     m_event_base = group->get_event_base();
 
@@ -118,7 +118,7 @@ client::client(struct event_base *event_base, benchmark_config *config,
         m_obj_gen(NULL), m_stats(config), m_reqs_processed(0), m_reqs_generated(0),
         m_set_ratio_count(0), m_get_ratio_count(0),
         m_arbitrary_command_ratio_count(0), m_executed_command_index(0),
-        m_tot_set_ops(0), m_tot_wait_ops(0), m_keylist(NULL)
+        m_tot_set_ops(0), m_tot_wait_ops(0), m_keylist(NULL), m_group(NULL)
 {
     m_event_base = event_base;
 
@@ -413,6 +413,10 @@ void client::handle_response(unsigned int conn_id, struct timeval timestamp,
             assert(0);
             break;
     }
+
+    if (m_group)
+        m_group->record_latency(ts_diff(request->m_sent_time, timestamp));
+
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -535,6 +539,9 @@ client_group::client_group(benchmark_config* config, abstract_protocol *protocol
 
     assert(protocol != NULL);
     assert(obj_gen != NULL);
+
+    m_histogram = new uint64_t[HISTOGRAM_BUCKETS];
+    assert(m_histogram != NULL);
 }
 
 client_group::~client_group(void)
@@ -548,6 +555,9 @@ client_group::~client_group(void)
     if (m_base != NULL)
         event_base_free(m_base);
     m_base = NULL;
+
+    if (m_histogram != NULL)
+        delete[] m_histogram;
 }
 
 int client_group::create_clients(int num)
